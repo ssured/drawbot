@@ -13,6 +13,6 @@
     "lib": ["es2019", "ESNext.Array"],
     "plugins": [],
   },
-  "include": ["./*"],
+  "include": ["src"],
   "exclude": ["node_modules"]
 }
