@@ -9,8 +9,15 @@ const { readFile } = require("fs-extra");
     const ports = await SerialPort.list();
     if (ports.length === 0) throw new Error("no serial port found");
 
+    const { path } = ports[0];
+    const port = new SerialPort(path, { baudRate: 115200 });
+    const disposers = [() => port.close()];
+
+    const parser = new Readline();
+    port.pipe(parser);
+
     const machineState = observable.object({
-      awaitAck: true,
+      awaitAck: 1,
       time: 0,
       state: "",
       mx: 0,
@@ -21,27 +28,20 @@ const { readFile } = require("fs-extra");
       wz: 0,
     });
 
-    const { path } = ports[0];
-    const port = new SerialPort(path, { baudRate: 115200 });
-    const disposers = [() => port.close()];
-
-    const parser = new Readline();
-    port.pipe(parser);
-
     const input = observable.array([]);
     disposers.push(
       reaction(
-        () => !machineState.awaitAck && input.length > 0,
+        () => machineState.awaitAck === 0 && input.length > 0,
         action((doWrite) => {
           if (!doWrite) return;
-          machineState.awaitAck = true;
-          const line = input.shift();
-          console.log(input.length, ">>", line);
-          port.write(line + "\n");
+          machineState.awaitAck += 1;
+          const line = input.shift() + "\n";
+          port.write(line);
         }),
         {
           name: `Write commands to plotter ${path}`,
           fireImmediately: true,
+          delay: 5,
         }
       )
     );
@@ -51,7 +51,7 @@ const { readFile } = require("fs-extra");
       "data",
       action(`Process data from plotter ${path}`, (lineWithNewline) => {
         const line = lineWithNewline.substr(0, lineWithNewline.length - 1);
-        console.log("<", Date.now(), machineState.awaitAck, line);
+        console.log(Date.now(), machineState.awaitAck, line);
         if (line[0] === "<" && line[line.length - 1] === ">") {
           const [state, mposx, my, mz, wposx, wy, wz] = line
             .substr(1, line.length - 2)
@@ -64,8 +64,9 @@ const { readFile } = require("fs-extra");
           machineState.wx = parseFloat(wposx.split(":")[1]);
           machineState.wy = parseFloat(wy);
           machineState.wz = parseFloat(wz);
+          machineState.awaitAck += 1;
         } else if (line.substr(0, 2) === "ok" || line.substr(0, 4) === "Grbl") {
-          machineState.awaitAck = false;
+          machineState.awaitAck -= 1;
         } else if (line) {
           output.push(line);
         }
@@ -82,20 +83,8 @@ const { readFile } = require("fs-extra");
 
     (async function () {
       console.log("waiting for 0 awaitAck");
-      await when(() => !machineState.awaitAck);
+      await when(() => machineState.awaitAck === 0);
       console.log("done waiting for 0 awaitAck");
-
-      disposers.push(
-        reaction(
-          () => machineState.time,
-          () => port.write("?"),
-          {
-            name: `Track status of plotter ${path}`,
-            fireImmediately: true,
-            delay: 10,
-          }
-        )
-      );
 
       disposers.push(
         queueProcessor(output, (line) =>
@@ -103,13 +92,9 @@ const { readFile } = require("fs-extra");
         )
       );
 
-      const job = require("./box"); // await readFile("./index.gcode", "utf-8");
-      write(...job.split("\n"));
-
-      // write("M3 S1000", "G4 P0.2");
-      // write("G0 F1500 X50 Y50");
-      // write("G0 F1500 X0 Y0");
-      // write("G0 F1500 X50 Y50");
+      write("M3 S1000", "G4 P0.2");
+      write("G0 F1500 X50 Y50");
+      write("G0 F1500 X0 Y0");
 
       await waitUntilIdle();
 
@@ -122,7 +107,7 @@ const { readFile } = require("fs-extra");
     }
 
     async function properExit() {
-      write("M5", "G4 P0.2");
+      // write("M5", "G4 P0.2");
       write("G0 F1500 X0 Y0");
       await waitUntilIdle();
       dispose();

@@ -1,9 +1,9 @@
-const W = 297 - 40;
-const H = 210 - 40;
+const W = 297 / 2 - 20;
+const H = 210 / 2 - 20;
 const C = [W / 2, H / 2];
 
 const aantalHoeken = 4;
-const angleInc = (2 * Math.PI) / 45;
+const angleInc = (2 * Math.PI) / 90;
 
 const hoeken = [...Array(aantalHoeken)].map(
   (_, i) => (i * (2 * Math.PI)) / aantalHoeken
