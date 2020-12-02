@@ -1,8 +1,8 @@
-import { ChangeTuple, JSONEntry, subject } from "../subject";
+import { ChangeTuple, JSONEntry, subject } from "./subject";
 
 import { autorun, observable, runInAction, toJS } from "mobx";
 import { createTransformer, ObservableGroupMap } from "mobx-utils";
-import { createUUID } from "../id";
+import { createUUID } from "./id";
 import charwise from "charwise";
 
 export interface syncstorage {

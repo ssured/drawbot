@@ -7,15 +7,17 @@ import {
   createAtom,
   IInterceptor,
   IMapWillChange,
+  intercept,
   IObservableMapInitialValues,
   observable,
   ObservableMap,
+  observe,
   reaction,
   runInAction,
   untracked,
   _isComputingDerivation,
 } from "mobx";
-import { computedFn } from "mobx-utils";
+import { computedFn, queueProcessor } from "mobx-utils";
 import sha256 from "tiny-hashes/sha256";
 
 export type JSONPrimitive = string | boolean | number | null;
@@ -108,7 +110,7 @@ class Node {
     initial: IObservableMapInitialValues<string, Value> = {}
   ) {
     this.data = observable.map<string, Value>(initial, { deep: false });
-    this.data.intercept(graph[HAM]);
+    intercept(this.data, graph[HAM]);
   }
 
   api: ModelAPI = {
@@ -156,7 +158,7 @@ class Node {
       const node = this.graph[NODE](subject, []);
 
       // force data to be logged
-      const stop = node.observe((c) => {});
+      const stop = node.observe(() => {});
       runInAction(() => {
         for (const [key, value] of this.data) {
           node.merge(key, value);
@@ -177,7 +179,7 @@ class Node {
 
   get observe() {
     this.activeAtom.reportObserved();
-    return this.data.observe.bind(this.data);
+    return this.data.observe_.bind(this.data);
   }
 
   get = computedFn((key: string) => {
@@ -216,8 +218,18 @@ export class Graph {
     {},
     { deep: false }
   );
-  public readonly changes = observable.array<ChangeTuple>([], { deep: false });
+  protected readonly changes = observable.array<ChangeTuple>([], {
+    deep: false,
+  });
   public readonly feed = observable.array<ChangeTuple>([], { deep: false });
+
+  public readonly connections = observable.map<
+    (subject: subject) => boolean,
+    {
+      onChange(tuple: ChangeTuple): void;
+      onObserved(subject: subject, observed: boolean): void;
+    }
+  >();
 
   constructor({
     getState = () => Date.now().toString(36),
@@ -265,6 +277,27 @@ export class Graph {
       },
       { scheduler }
     );
+
+    // install handlers
+    observe(this.observed, (change) => {
+      const subject =
+        change.type === "delete" ? change.oldValue : change.newValue;
+      const observed = change.type !== "delete";
+
+      for (const [filter, { onObserved }] of this.connections) {
+        if (!filter(subject)) continue;
+        onObserved(subject, observed);
+      }
+    });
+
+    queueProcessor(this.changes, (tuple) => {
+      const subject = tuple[0];
+
+      for (const [filter, { onChange }] of this.connections) {
+        if (!filter(subject)) continue;
+        onChange(tuple);
+      }
+    });
   }
 
   public merge([subject, key, value]: ChangeTuple) {
