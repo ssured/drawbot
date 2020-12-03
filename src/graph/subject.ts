@@ -81,6 +81,7 @@ export interface ModelAPI {
   created: string; // state of host when this API was created
   subject: subject;
   [NODE]: Node;
+  getState: (prop?: string) => string;
 
   sub: <M extends typeof Model>(Model: M, ...path: string[]) => InstanceType<M>;
   open: <M extends typeof Model>(
@@ -88,6 +89,12 @@ export interface ModelAPI {
     subject?: subject
   ) => InstanceType<M>;
   immutable: <M extends typeof Model>(Model: M) => InstanceType<M>;
+  create: <M extends typeof Model>(
+    Model: M,
+    parent?: subject,
+    initial?: Partial<WritablePart<InstanceType<M>>>,
+    keepAlive?: number
+  ) => Promise<InstanceType<M>>;
 }
 
 class Node {
@@ -147,6 +154,12 @@ class Node {
     created: this.graph.getState(),
     subject: this.subject,
     [NODE]: this,
+    getState: (prop?: string) => {
+      if (prop == null) return this.graph.getState();
+
+      this.activeAtom.reportObserved();
+      return this.data.get(prop)?.[0] ?? "";
+    },
 
     // open een submodel, als er geen subpath wordt gegeven dan wordt de huidige node geopend als ander model
     sub: (Model, ...path) => {
@@ -174,6 +187,8 @@ class Node {
 
       return Model[FOR](node.api) as any;
     },
+
+    create: this.graph.create,
   };
 
   private onObserved = () => {
@@ -218,6 +233,41 @@ export class FutureDataError extends Error {}
 const keyFor = (subject: subject): string => charwise.encode(subject);
 // const subjectFor = (key: string): subject => JSON.parse(key);
 
+// Returns a monotonic increasing string.
+// calling getState with an argument registers this argument as a branding Id for the state
+// example usage is branding states with your public key
+
+const defaultGetState = (() => {
+  const drift = () => 0;
+
+  let last = "";
+  let index = 0;
+  const z = (35).toString(36);
+  let id = "";
+  return (newId?: string): string => {
+    if (newId) {
+      id = newId;
+    }
+    const now = (Date.now() + drift()).toString(36);
+    index = last === now ? index + 1 : 0;
+    last = now;
+    if (index === 0) return charwise.encode([now, id]);
+    const v = index.toString(36);
+    return charwise.encode([now, id, z.repeat(v.length - 1) + v]);
+  };
+})();
+
+// state to timestamp
+const defaultStateToMs = (state: string) => {
+  let value: string;
+  try {
+    value = (charwise.decode(state) as [string])[0];
+  } catch (e) {
+    value = state;
+  }
+  return parseInt(value, 36);
+};
+
 export class Graph {
   public getState: () => string;
   public getUUID: () => string;
@@ -242,8 +292,8 @@ export class Graph {
   >();
 
   constructor({
-    getState = () => Date.now().toString(36),
-    stateToMs = (state: string) => parseInt(state, 36),
+    getState = defaultGetState, // () => Date.now().toString(36),
+    stateToMs = defaultStateToMs, // (state: string) => parseInt(state, 36),
     getUUID = () => this.getState() + Math.random().toString(36).substr(2),
     EPSILON = 0.0001,
     scheduler,
@@ -433,12 +483,12 @@ export class Graph {
       : computed(() => Model[FOR](this[NODE](subject).api) as any).get();
   }
 
-  public async create<M extends typeof Model>(
+  public create = async <M extends typeof Model>(
     Model: M,
     parent: subject = [],
     initial: Partial<WritablePart<InstanceType<M>>> = {},
     keepAlive = 1000
-  ): Promise<InstanceType<M>> {
+  ): Promise<InstanceType<M>> => {
     const model = observable.box<InstanceType<M>>();
     const subject = [...parent, this.getUUID()];
 
@@ -452,7 +502,7 @@ export class Graph {
     Object.assign(model.get(), initial);
     setTimeout(stop, keepAlive);
     return model.get();
-  }
+  };
 }
 
 const modelFactory = computedFn((model: typeof Model, api: ModelAPI) =>
