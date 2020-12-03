@@ -1,53 +1,66 @@
-import { computed } from "mobx";
-import { ifNumber, ifString } from "./graph/guard";
-import { Model } from "./graph/subject";
+import { action, comparer, computed } from "mobx";
+import { ifNumber, ifObject, ifString } from "./graph/guard";
+import { GuardType, Model } from "./graph/subject";
 
 export class DrawbotJob extends Model {
+  @action addGcode(gcodes: string | string[]) {
+    for (const gcode of Array.isArray(gcodes) ? gcodes : [gcodes]) {
+      const state = this.$.getState();
+      this.$.write(ifString, gcode, state);
+    }
+  }
+
+  @computed({ equals: comparer.structural }) get gcodeKeys() {
+    return this.$.keys()
+      .filter((key) => key.substr(0, 2) === "KJ")
+      .sort();
+  }
+
+  readLine(key: string) {
+    return this.$.read(ifString, key) || "";
+  }
+
   @computed get gcode() {
-    return this.$.read(ifString, "gcode") || "";
+    return this.gcodeKeys
+      .map((key) => this.readLine(key))
+      .filter((gcode) => gcode !== "")
+      .join("\n");
   }
   set gcode(gcode) {
-    this.$.write(ifString, gcode, "gcode");
+    this.addGcode(gcode);
+    // this.$.write(ifString, gcode, "gcode");
   }
 }
 
+export const ifDrawbotState = ifObject({
+  time: ifNumber,
+  state: ifString,
+  mx: ifNumber,
+  my: ifNumber,
+});
+
 export class DrawbotStatus extends Model {
+  @computed get current(): Partial<GuardType<typeof ifDrawbotState>> {
+    return this.$.read(ifDrawbotState, "current") || {};
+  }
+
   @computed get time() {
-    return this.$.read(ifNumber, "time") || 0;
+    return this.current.time || 0;
   }
   @computed get state() {
-    return this.$.read(ifString, "state") || "";
+    return this.current.state || "";
   }
   @computed get mx() {
-    return this.$.read(ifNumber, "mx") || 0;
+    return this.current.mx || 0;
   }
   @computed get my() {
-    return this.$.read(ifNumber, "my") || 0;
-  }
-  @computed get mz() {
-    return this.$.read(ifNumber, "mz") || 0;
+    return this.current.my || 0;
   }
 }
 
 export class Drawbot extends Model {
   @computed get status() {
     return this.$.open(DrawbotStatus, ["tmp", ...this.$.subject]);
-  }
-
-  @computed get time() {
-    return this.status.time;
-  }
-  @computed get state() {
-    return this.status.state;
-  }
-  @computed get mx() {
-    return this.status.mx;
-  }
-  @computed get my() {
-    return this.status.my;
-  }
-  @computed get mz() {
-    return this.status.mz;
   }
 
   @computed get currentJob() {

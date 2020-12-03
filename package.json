@@ -26,6 +26,7 @@
     "mobx": "^5.15.4",
     "mobx-utils": "^5.6.1",
     "parse-svg-path": "^0.1.2",
+    "sanitize-filename": "^1.6.3",
     "serialport": "^9.0.2",
     "simplify-js": "^1.2.4",
     "svg-path-contours": "^2.0.0",

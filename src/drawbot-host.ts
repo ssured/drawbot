@@ -8,16 +8,16 @@ import {
   reaction,
   when,
 } from "mobx";
-import { now, queueProcessor } from "mobx-utils";
-import WebSocket from "ws";
-import { ifNumber, ifString } from "./graph/guard";
-import { ChangeTuple, Graph, Model, subject } from "./graph/subject";
-import { createLogger } from "./utils/log";
-import { Message } from "./hubmessage";
-
+import { queueProcessor } from "mobx-utils";
 import SerialPort from "serialport";
-import { Drawbot, DrawbotStatus } from "./Drawbot";
+import WebSocket from "ws";
+import { Drawbot, DrawbotStatus, ifDrawbotState } from "./Drawbot";
+import { ifNumber, ifObject, ifString } from "./graph/guard";
+import { ChangeTuple, Graph } from "./graph/subject";
+import { Message } from "./hubmessage";
 import { DRAWBOT } from "./knownSubjects";
+import { createLogger } from "./utils/log";
+
 const Readline = require("@serialport/parser-readline");
 
 // configure mobx to inform us of any improper behaviour
@@ -63,24 +63,30 @@ const graph = new Graph({});
   });
 }
 
-class DrawbotServer extends Drawbot {
-  @observable awaitAck = true;
-
-  @computed get writableStatus() {
-    return this.$.open(WritableDrawbotStatus, this.status.$.subject);
-  }
-}
-
 class WritableDrawbotStatus extends DrawbotStatus {
   @action updateFromLogLine(line: string) {
     const [state, mposx, my, mz, _wposx, _wy, _wz] = line
       .substr(1, line.length - 2)
       .split(",");
-    this.$.write(ifNumber, Date.now(), "time");
-    this.$.write(ifString, state, "state");
-    this.$.write(ifNumber, parseFloat(mposx.split(":")[1]), "mx");
-    this.$.write(ifNumber, parseFloat(my), "my");
-    this.$.write(ifNumber, parseFloat(mz), "mz");
+
+    this.$.write(
+      ifDrawbotState,
+      {
+        time: Date.now(),
+        state,
+        mx: parseFloat(parseFloat(mposx.split(":")[1]).toFixed(2)),
+        my: parseFloat(parseFloat(my).toFixed(2)),
+      },
+      "current"
+    );
+  }
+}
+
+class DrawbotServer extends Drawbot {
+  @observable awaitAck = true;
+
+  @computed get writableStatus() {
+    return this.$.open(WritableDrawbotStatus, this.status.$.subject);
   }
 }
 
@@ -141,8 +147,6 @@ class WritableDrawbotStatus extends DrawbotStatus {
       for (const disposer of disposers) disposer();
     };
 
-    autorun(() => log("awaitAck", getMachine().awaitAck));
-
     (async function () {
       console.log("waiting for 0 awaitAck");
       await when(() => getMachine().awaitAck === false);
@@ -150,7 +154,7 @@ class WritableDrawbotStatus extends DrawbotStatus {
 
       disposers.push(
         reaction(
-          () => getMachine().time,
+          () => getMachine().status.time,
           () => port.write("?"),
           {
             name: `Track status of plotter ${path}`,
@@ -168,15 +172,53 @@ class WritableDrawbotStatus extends DrawbotStatus {
 
       log("start listening for jobs");
 
-      autorun(() => {
-        const gcode = getMachine().currentJob?.gcode;
-        if (!gcode) return;
-        console.log("got job", gcode);
+      let stop: (() => void) | undefined;
 
-        write(...gcode.split("\n"));
-        write("M5", "G4 P0.2");
-        write("G0 F1500 X0 Y0");
-      });
+      reaction(
+        () => getMachine().currentJob,
+        (currentJob) => {
+          stop?.();
+          if (currentJob == null) {
+            stop = () => {};
+            return;
+          }
+
+          const execution = observable({
+            pos: "",
+          });
+
+          const stopProcessing = reaction(
+            () => currentJob.gcodeKeys.filter((key) => key > execution.pos),
+            (unprocessedKeys) => {
+              if (unprocessedKeys.length === 0) return;
+
+              const key = unprocessedKeys[0];
+              const gcode = currentJob.readLine(key);
+              log("write", gcode);
+              write(...gcode.split("\n"));
+              execution.pos = key;
+            },
+            { fireImmediately: true }
+          );
+
+          stop = () => {
+            stopProcessing();
+            // write(String.fromCharCode(24)); // ctrl + x
+            write("M5", "G4 P0.2");
+            write("G90");
+            write("G0 F1500 X0 Y0");
+          };
+
+          // const gcode = getMachine().currentJob?.gcode;
+          // if (!gcode) return;
+          // console.log("got job", gcode);
+
+          // write(...gcode.split("\n"));
+          // write("M5", "G4 P0.2");
+          // write("G0 F1500 X0 Y0");
+        },
+        { fireImmediately: true }
+      );
     })();
   } catch (e) {
     console.error(e);

@@ -48,7 +48,10 @@ const graph = new Graph({
 const drawbot = () => graph.get(Drawbot, DRAWBOT);
 
 autorun(() => {
-  const { mx, my, currentJob } = drawbot();
+  const {
+    status: { mx, my },
+    currentJob,
+  } = drawbot();
   log("Pos:", mx, my, currentJob?.$.subject || "--");
 });
 
