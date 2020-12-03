@@ -43,31 +43,23 @@ const graph = new Graph({
 }
 
 const gcode = {
-  _absoluteCoordinates: true,
-
   move(x: number | undefined, y: number | undefined) {
-    return [
-      ...this.abs(),
-      `G0 F1500 ${x == null ? "" : `X${x}`} ${y == null ? "" : `Y${y}`}`,
-    ];
+    return [`G0 F1500 ${x == null ? "" : `X${x}`} ${y == null ? "" : `Y${y}`}`];
   },
 
   moveRel(x: number | undefined, y: number | undefined) {
     return [
-      ...this.rel(),
+      "G91",
       `G0 F1500 ${x == null ? "" : `X${x}`} ${y == null ? "" : `Y${y}`}`,
+      "G90",
     ];
   },
 
-  abs() {
-    if (this._absoluteCoordinates) return [];
-    this._absoluteCoordinates = true;
-    return ["G90"];
+  penUp() {
+    return ["M5", "G4 P0.2"];
   },
-  rel() {
-    if (!this._absoluteCoordinates) return [];
-    this._absoluteCoordinates = false;
-    return ["G91"];
+  penDown() {
+    return ["M3 S1000", "G4 P0.2"];
   },
 };
 
@@ -78,17 +70,6 @@ const drawbotInfo = computedFn(() => {
       <dd>${drawbot.status.state}</dd>
       <dt>mx</dt>
       <dd>
-        ${drawbot.status.mx}
-        <input
-          type="number"
-          value="${drawbot.status.mx}"
-          @change=${(e: { target: HTMLInputElement }) => {
-            console.log(e.target, e.target.valueAsNumber);
-            drawbot.currentJob?.addGcode(
-              gcode.move(e.target.valueAsNumber, undefined)
-            );
-          }}
-        />
         <button
           @click=${() => drawbot.currentJob?.addGcode(gcode.moveRel(-10, 0))}
         >
@@ -99,6 +80,7 @@ const drawbotInfo = computedFn(() => {
         >
           -1
         </button>
+        ${drawbot.status.mx}
         <button
           @click=${() => drawbot.currentJob?.addGcode(gcode.moveRel(1, 0))}
         >
@@ -112,22 +94,41 @@ const drawbotInfo = computedFn(() => {
       </dd>
       <dt>my</dt>
       <dd>
+        <button
+          @click=${() => drawbot.currentJob?.addGcode(gcode.moveRel(0, -10))}
+        >
+          -10
+        </button>
+        <button
+          @click=${() => drawbot.currentJob?.addGcode(gcode.moveRel(0, -1))}
+        >
+          -1
+        </button>
         ${drawbot.status.my}
-        <input
-          type="number"
-          value="${drawbot.status.my}"
-          @change=${(e: { target: HTMLInputElement }) => {
-            console.log(e.target, e.target.valueAsNumber);
-            drawbot.currentJob?.addGcode(
-              gcode.move(undefined, e.target.valueAsNumber)
-            );
-          }}
-        />
+        <button
+          @click=${() => drawbot.currentJob?.addGcode(gcode.moveRel(0, 1))}
+        >
+          +1
+        </button>
+        <button
+          @click=${() => drawbot.currentJob?.addGcode(gcode.moveRel(0, 10))}
+        >
+          +10
+        </button>
       </dd>
       <dt>time</dt>
-      <dd>${drawbot.status.time}</dd>
+      <dd>${new Date(drawbot.status.time).toISOString()}</dd>
       <dt>job</dt>
       <dd>${JSON.stringify(drawbot.currentJob?.$.subject ?? null)}</dd>
+      <dt>pen</dt>
+      <dd>
+        <button @click=${() => drawbot.currentJob?.addGcode(gcode.penUp())}>
+          up
+        </button>
+        <button @click=${() => drawbot.currentJob?.addGcode(gcode.penDown())}>
+          down
+        </button>
+      </dd>
     </dl>
 
     <button

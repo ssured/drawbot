@@ -159,7 +159,7 @@ class DrawbotServer extends Drawbot {
           {
             name: `Track status of plotter ${path}`,
             fireImmediately: true,
-            delay: 1000,
+            delay: 100,
           }
         )
       );
