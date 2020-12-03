@@ -2,6 +2,7 @@ import charwise from "charwise";
 import stringify from "json-stable-stringify";
 import {
   action,
+  autorun,
   comparer,
   computed,
   createAtom,
@@ -15,6 +16,7 @@ import {
   reaction,
   runInAction,
   untracked,
+  when,
   _isComputingDerivation,
 } from "mobx";
 import { computedFn, queueProcessor } from "mobx-utils";
@@ -107,10 +109,14 @@ class Node {
   constructor(
     private graph: Graph,
     public subject: subject,
-    initial: IObservableMapInitialValues<string, Value> = {}
+    initial: IObservableMapInitialValues<string, Value> = {},
+    observeOnCreate = false
   ) {
     this.data = observable.map<string, Value>(initial, { deep: false });
     intercept(this.data, graph[HAM]);
+    if (observeOnCreate) {
+      this.onObserved();
+    }
   }
 
   api: ModelAPI = {
@@ -170,16 +176,19 @@ class Node {
     },
   };
 
-  private onUnobserved!: () => void;
-  private activeAtom = createAtom(
-    `node-${this.subject}`,
-    () => (this.onUnobserved = this.graph[ONOBSERVED](this)),
-    () => this.onUnobserved()
+  private onObserved = () => {
+    this.onUnobserved?.();
+    this.onUnobserved = this.graph[ONOBSERVED](this);
+  };
+
+  private onUnobserved: (() => void) | undefined;
+  private activeAtom = createAtom(`node-${this.subject}`, this.onObserved, () =>
+    this.onUnobserved?.()
   );
 
   get observe() {
     this.activeAtom.reportObserved();
-    return this.data.observe_.bind(this.data);
+    return this.data.observe.bind(this.data);
   }
 
   get = computedFn((key: string) => {
@@ -213,6 +222,7 @@ export class Graph {
   public getState: () => string;
   public getUUID: () => string;
   public EPSILON: number;
+  protected onlyObservedSubjects: boolean;
 
   public readonly observed = observable.map<string, subject>(
     {},
@@ -237,16 +247,19 @@ export class Graph {
     getUUID = () => this.getState() + Math.random().toString(36).substr(2),
     EPSILON = 0.0001,
     scheduler,
+    onlyObservedSubjects = true,
   }: Partial<{
     getState: () => string;
     stateToMs: (state: string) => number;
     getUUID: () => string;
     EPSILON: number;
     scheduler?: ((callback: () => void) => any) | undefined;
+    onlyObservedSubjects?: boolean;
   }>) {
     this.getState = getState;
     this.getUUID = getUUID;
     this.EPSILON = EPSILON;
+    this.onlyObservedSubjects = onlyObservedSubjects;
 
     // listen to incoming changes feed
     reaction(
@@ -256,7 +269,9 @@ export class Graph {
 
         for (const change of this.feed.splice(0, this.feed.length)) {
           const [_subject, prop, value] = change;
-          const subject = this.observed.get(keyFor(_subject));
+          const subject = this.onlyObservedSubjects
+            ? this.observed.get(keyFor(_subject))
+            : _subject;
           if (subject == null) continue;
           try {
             this.merge([subject, prop, value]);
@@ -350,7 +365,9 @@ export class Graph {
     const getNode = computedFn(
       (strSubject: string): Node => {
         const subject = JSON.parse(strSubject) as subject;
-        return untracked(() => new Node(this, subject));
+        return untracked(
+          () => new Node(this, subject, {}, !this.onlyObservedSubjects)
+        );
       }
     );
 
@@ -414,6 +431,27 @@ export class Graph {
     return _isComputingDerivation()
       ? (Model[FOR](this[NODE](subject).api) as any)
       : computed(() => Model[FOR](this[NODE](subject).api) as any).get();
+  }
+
+  public async create<M extends typeof Model>(
+    Model: M,
+    parent: subject = [],
+    initial: Partial<WritablePart<InstanceType<M>>> = {},
+    keepAlive = 1000
+  ): Promise<InstanceType<M>> {
+    const model = observable.box<InstanceType<M>>();
+    const subject = [...parent, this.getUUID()];
+
+    const stop = autorun(() => {
+      const m = this.get(Model, subject);
+      runInAction(() => model.set(m));
+      m.$.keys();
+    });
+
+    await when(() => !!model.get());
+    Object.assign(model.get(), initial);
+    setTimeout(stop, keepAlive);
+    return model.get();
   }
 }
 

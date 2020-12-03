@@ -24,7 +24,7 @@ export const jsonLocalFileStorage = (dataDir = "./data") => {
         const contents = await readFile(file, "utf-8");
         return JSON.parse(contents) as any;
       } catch (e) {
-        console.log(e);
+        console.log("get error", file, e);
       }
       return;
     },

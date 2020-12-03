@@ -6,10 +6,13 @@ import { createLogger } from "./utils/log";
 import { Message } from "./hubmessage";
 
 const log = createLogger(__filename);
-const graph = new Graph({});
+const graph = new Graph({
+  scheduler: process.nextTick,
+});
 
 (async () => {
   const filter = (subject: subject) => {
+    if (subject[0] === "tmp") return false;
     return true;
   };
 
