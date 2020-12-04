@@ -113,17 +113,9 @@ class Node {
     );
   }
 
-  constructor(
-    private graph: Graph,
-    public subject: subject,
-    initial: IObservableMapInitialValues<string, Value> = {},
-    observeOnCreate = false
-  ) {
-    this.data = observable.map<string, Value>(initial, { deep: false });
+  constructor(private graph: Graph, public subject: subject) {
+    this.data = observable.map<string, Value>({}, { deep: false });
     intercept(this.data, graph[HAM]);
-    if (observeOnCreate) {
-      this.onObserved();
-    }
   }
 
   api: ModelAPI = {
@@ -272,7 +264,6 @@ export class Graph {
   public getState: () => string;
   public getUUID: () => string;
   public EPSILON: number;
-  protected onlyObservedSubjects: boolean;
 
   public readonly observed = observable.map<string, subject>(
     {},
@@ -297,19 +288,16 @@ export class Graph {
     getUUID = () => this.getState() + Math.random().toString(36).substr(2),
     EPSILON = 0.0001,
     scheduler,
-    onlyObservedSubjects = true,
   }: Partial<{
     getState: () => string;
     stateToMs: (state: string) => number;
     getUUID: () => string;
     EPSILON: number;
     scheduler?: ((callback: () => void) => any) | undefined;
-    onlyObservedSubjects?: boolean;
   }>) {
     this.getState = getState;
     this.getUUID = getUUID;
     this.EPSILON = EPSILON;
-    this.onlyObservedSubjects = onlyObservedSubjects;
 
     // listen to incoming changes feed
     reaction(
@@ -319,9 +307,7 @@ export class Graph {
 
         for (const change of this.feed.splice(0, this.feed.length)) {
           const [_subject, prop, value] = change;
-          const subject = this.onlyObservedSubjects
-            ? this.observed.get(keyFor(_subject))
-            : _subject;
+          const subject = this.observed.get(keyFor(_subject));
           if (subject == null) continue;
           try {
             this.merge([subject, prop, value]);
@@ -415,9 +401,7 @@ export class Graph {
     const getNode = computedFn(
       (strSubject: string): Node => {
         const subject = JSON.parse(strSubject) as subject;
-        return untracked(
-          () => new Node(this, subject, {}, !this.onlyObservedSubjects)
-        );
+        return untracked(() => new Node(this, subject));
       }
     );
 
