@@ -33,7 +33,6 @@ export class DrawbotJob extends Model {
 }
 
 export const ifDrawbotState = ifObject({
-  time: ifNumber,
   state: ifString,
   mx: ifNumber,
   my: ifNumber,
@@ -45,7 +44,7 @@ export class DrawbotStatus extends Model {
   }
 
   @computed get time() {
-    return this.current.time || 0;
+    return this.$.stateToMs(this.$.getState("current"));
   }
   @computed get state() {
     return this.current.state || "";

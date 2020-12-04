@@ -82,6 +82,7 @@ export interface ModelAPI {
   subject: subject;
   [NODE]: Node;
   getState: (prop?: string) => string;
+  stateToMs: (state: string) => number;
 
   sub: <M extends typeof Model>(Model: M, ...path: string[]) => InstanceType<M>;
   open: <M extends typeof Model>(
@@ -152,6 +153,7 @@ class Node {
       this.activeAtom.reportObserved();
       return this.data.get(prop)?.[0] ?? "";
     },
+    stateToMs: this.graph.stateToMs,
 
     // open een submodel, als er geen subpath wordt gegeven dan wordt de huidige node geopend als ander model
     sub: (Model, ...path) => {
@@ -262,6 +264,7 @@ const defaultStateToMs = (state: string) => {
 
 export class Graph {
   public getState: () => string;
+  public stateToMs: (state: string) => number;
   public getUUID: () => string;
   public EPSILON: number;
 
@@ -296,6 +299,7 @@ export class Graph {
     scheduler?: ((callback: () => void) => any) | undefined;
   }>) {
     this.getState = getState;
+    this.stateToMs = stateToMs;
     this.getUUID = getUUID;
     this.EPSILON = EPSILON;
 

@@ -4,7 +4,7 @@ import WebSocket from "ws";
 import { ifNumber } from "./graph/guard";
 import { ChangeTuple, Graph, Model, subject } from "./graph/subject";
 import { createLogger } from "./utils/log";
-import { Message } from "./hubmessage";
+import { Message } from "./graph/transport/ws/shared";
 
 const log = createLogger(__filename);
 

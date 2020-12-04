@@ -10,7 +10,7 @@
     "outDir": "dist",
     "strict": true,
     "experimentalDecorators": true,
-    "lib": ["es2019", "ESNext.Array", "DOM"],
+    "lib": ["es2019", "ESNext.Array", "DOM", "DOM.Iterable"],
     "plugins": [],
     "typeRoots": ["./node_modules/@types", "./src/@types"]
   },

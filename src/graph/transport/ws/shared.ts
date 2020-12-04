@@ -1,4 +1,4 @@
-import { ChangeTuple, subject } from "./graph/subject";
+import { ChangeTuple, subject } from "../../subject";
 
 export type Message =
   | {

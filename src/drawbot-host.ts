@@ -12,9 +12,8 @@ import { queueProcessor } from "mobx-utils";
 import SerialPort from "serialport";
 import WebSocket from "ws";
 import { Drawbot, DrawbotStatus, ifDrawbotState } from "./Drawbot";
-import { ifNumber, ifObject, ifString } from "./graph/guard";
-import { ChangeTuple, Graph } from "./graph/subject";
-import { Message } from "./hubmessage";
+import { Graph } from "./graph/subject";
+import { connectWS } from "./graph/transport/ws/client";
 import { DRAWBOT } from "./knownSubjects";
 import { createLogger } from "./utils/log";
 
@@ -31,59 +30,35 @@ const log = createLogger(__filename);
 
 const graph = new Graph({});
 
-// Setup WebSocket connection to server
-{
-  const ws = new WebSocket(`ws://localhost:8080`);
-
-  const socketIsOpen = new Promise<void>((res) => {
-    ws.addEventListener("open", () => {
-      res();
-
-      ws.addEventListener("message", (e) => {
-        const msg = JSON.parse(e.data) as Message;
-        // log(`Received ${JSON.stringify(msg)}`);
-        onMessage(msg);
-      });
-    });
-  });
-
-  async function send(msg: Message) {
-    await socketIsOpen;
-    ws.send(JSON.stringify(msg));
-  }
-
-  const onMessage = action((msg: Message) => {
-    if (!("tuple" in msg)) return;
-    graph.feed.push(msg.tuple);
-  });
-
-  graph.connections.set(() => true, {
-    onChange: (tuple) => send({ tuple: tuple.slice(0, 3) as ChangeTuple }),
-    onObserved: (subject, observed) => send({ subject, observed }),
-  });
-}
+const stopConnection = connectWS({
+  graph,
+  Socket: WebSocket as any,
+  wsUrl: `ws://localhost:8080`,
+});
 
 class WritableDrawbotStatus extends DrawbotStatus {
   @action updateFromLogLine(line: string) {
-    const [state, mposx, my, mz, _wposx, _wy, _wz] = line
+    const time = Date.now();
+    const [state, mposx, my, _mz, _wposx, _wy, _wz] = line
       .substr(1, line.length - 2)
       .split(",");
 
-    this.$.write(
-      ifDrawbotState,
-      {
-        time: Date.now(),
-        state,
-        mx: parseFloat(parseFloat(mposx.split(":")[1]).toFixed(2)),
-        my: parseFloat(parseFloat(my).toFixed(2)),
-      },
-      "current"
-    );
+    const currentState = {
+      state,
+      mx: parseFloat(parseFloat(mposx.split(":")[1]).toFixed(2)),
+      my: parseFloat(parseFloat(my).toFixed(2)),
+    };
+
+    const lastState = this.$.read(ifDrawbotState, "current");
+    if (JSON.stringify(lastState) !== JSON.stringify(currentState)) {
+      this.$.write(ifDrawbotState, currentState, "current");
+    }
   }
 }
 
 class DrawbotServer extends Drawbot {
   @observable awaitAck = true;
+  @observable lastLogLine = 0;
 
   @computed get writableStatus() {
     return this.$.open(WritableDrawbotStatus, this.status.$.subject);
@@ -127,9 +102,10 @@ class DrawbotServer extends Drawbot {
       "data",
       action(`Process data from plotter ${path}`, (lineWithNewline: string) => {
         const line = lineWithNewline.substr(0, lineWithNewline.length - 1);
-        console.log("<", Date.now(), getMachine().awaitAck, line);
+        // console.log("<", Date.now(), getMachine().awaitAck, line);
         if (line[0] === "<" && line[line.length - 1] === ">") {
           getMachine().writableStatus.updateFromLogLine(line);
+          getMachine().lastLogLine = Date.now();
         } else if (line.substr(0, 2) === "ok" || line.substr(0, 4) === "Grbl") {
           getMachine().awaitAck = false;
         } else if (line) {
@@ -154,12 +130,12 @@ class DrawbotServer extends Drawbot {
 
       disposers.push(
         reaction(
-          () => getMachine().status.time,
+          () => getMachine().status.current && getMachine().lastLogLine,
           () => port.write("?"),
           {
             name: `Track status of plotter ${path}`,
             fireImmediately: true,
-            delay: 100,
+            delay: 50,
           }
         )
       );

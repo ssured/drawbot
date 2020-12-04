@@ -3,7 +3,7 @@ import { now } from "mobx-utils";
 import WebSocket from "ws";
 import { Drawbot, DrawbotJob } from "./Drawbot";
 import { ChangeTuple, Graph } from "./graph/subject";
-import { Message } from "./hubmessage";
+import { Message } from "./graph/transport/ws/shared";
 import { DRAWBOT } from "./knownSubjects";
 import { createLogger } from "./utils/log";
 

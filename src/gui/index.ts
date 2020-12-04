@@ -1,48 +1,22 @@
 import { html, render } from "lit-html";
-import { action, autorun } from "mobx";
+import { autorun } from "mobx";
 import { computedFn, now } from "mobx-utils";
 import { Drawbot, DrawbotJob } from "../Drawbot";
-import { ChangeTuple, Graph } from "../graph/subject";
-import { Message } from "../hubmessage";
+import { Graph } from "../graph/subject";
 import { DRAWBOT } from "../knownSubjects";
 import * as ln from "@lnjs/core";
 import simplify from "simplify-js";
+import { createMatrix } from "../utils/2dmath";
+import { connectWS } from "../graph/transport/ws/client";
 
 const graph = new Graph({
   scheduler: requestAnimationFrame,
 });
 
-// Setup WebSocket connection to server
-{
-  const ws = new WebSocket(`ws://localhost:8080`);
-
-  const socketIsOpen = new Promise<void>((res) => {
-    ws.addEventListener("open", () => {
-      res();
-
-      ws.addEventListener("message", (e) => {
-        const msg = JSON.parse(e.data) as Message;
-        // log(`Received ${JSON.stringify(msg)}`);
-        onMessage(msg);
-      });
-    });
-  });
-
-  async function send(msg: Message) {
-    await socketIsOpen;
-    ws.send(JSON.stringify(msg));
-  }
-
-  const onMessage = action((msg: Message) => {
-    if (!("tuple" in msg)) return;
-    graph.feed.push(msg.tuple);
-  });
-
-  graph.connections.set(() => true, {
-    onChange: (tuple) => send({ tuple: tuple.slice(0, 3) as ChangeTuple }),
-    onObserved: (subject, observed) => send({ subject, observed }),
-  });
-}
+const stopConnection = connectWS({
+  graph,
+  wsUrl: `ws://localhost:8080`,
+});
 
 const gcode = {
   move(x: number | undefined, y: number | undefined) {
@@ -162,81 +136,132 @@ const drawbotInfo = computedFn(() => {
 
     <button
       @click=${async () => {
-        // function shape(x: number, y: number): number {
-        //   // return Math.cos(x * y) * (x * x - y * y);
-        //   // return -1 / (x * x + y * y);
-        //   return -1 / Math.pow(Math.pow(x, 2) + Math.pow(y, 2), 2);
-        // }
+        const svg = (document.getElementById("svgObject")! as HTMLObjectElement)
+          .contentDocument!;
 
-        // let scene = new ln.Scene();
-        // let min = new ln.Vector(-2, -2, -4);
-        // let max = new ln.Vector(2, 2, 2);
-        // let box = new ln.Box(min, max);
-        // let fn = new ln.Function(shape, box, ln.Direction.Below);
-        // scene.add(fn);
+        const BBox = function (
+          xMin = Infinity,
+          yMin = Infinity,
+          xMax = -Infinity,
+          yMax = -Infinity
+        ) {
+          return {
+            xMin,
+            xMax,
+            yMin,
+            yMax,
+            extend({ x, y }: { x: number; y: number }) {
+              if (x < this.xMin) this.xMin = x;
+              if (x > this.xMax) this.xMax = x;
+              if (y < this.yMin) this.yMin = y;
+              if (y > this.yMax) this.yMax = y;
+            },
+            get width() {
+              return this.xMax - this.xMin;
+            },
+            get height() {
+              return this.yMax - this.yMin;
+            },
+            get aspect() {
+              return this.width / this.height;
+            },
+            get cx() {
+              return (this.xMin + this.xMax) / 2;
+            },
+            get cy() {
+              return (this.yMin + this.yMax) / 2;
+            },
+            get c() {
+              return { x: this.cx, y: this.cy };
+            },
+            get rMin() {
+              return Math.min(this.width, this.height) / 2;
+            },
+            get rMax() {
+              return Math.max(this.width, this.height) / 2;
+            },
+            get r() {
+              return Math.sqrt(this.width ** 2 + this.height ** 2) / 2;
+            },
+          };
+        };
 
-        // let eye = new ln.Vector(3, 0, 3);
-        // let center = new ln.Vector(1.1, 0, 0);
-        // let up = new ln.Vector(0, 0, 1);
+        const input = BBox();
 
-        // let height = 297 / 2 - 10;
-        // let width = 210 - 10;
-        // let paths = scene
-        //   .render(eye, center, up, width, height, 50, 0.1, 100, 0.01)
-        //   .map((path) => simplify(path, 0.05));
-
-        const scene = new ln.Scene();
-        const n = 5;
-        for (let x = -n; x <= n; x++) {
-          for (let y = -n; y <= n; y++) {
-            const p = Math.random() * 0.25 + 0.2;
-            const dx = Math.random() * 0.5 - 0.25;
-            const dy = Math.random() * 0.5 + 0.25;
-            const z = 3;
-            const fx = x;
-            const fy = y;
-            const fz = Math.random() * 3 + 1;
-            if (x === 2 && y === 1) {
-              continue;
-            }
-            const shape = new ln.Cube(
-              new ln.Vector(fx - p, fy - p, 0),
-              new ln.Vector(fx + p, fy + p, fz)
-            );
-            scene.add(shape);
+        for (const polyline of svg.getElementsByTagName("polyline")) {
+          for (const point of polyline.points) {
+            input.extend(point);
           }
         }
 
-        let eye = new ln.Vector(1.75, 1.25, 6);
-        let center = new ln.Vector(0, 0, 0);
-        let up = new ln.Vector(0, 0, 1);
-        let height = 297 / 2 - 10;
-        let width = 210 - 10;
+        const PAPERSIZE = BBox(0, 0, 210 - 10, 297 / 2 - 10);
 
-        // function render() {
-        let paths = scene
-          .render(eye, center, up, width, height, 100, 0.1, 100, 0.01)
-          .map((path) => simplify(path, 0.025));
-        // let svg = ln.toSVG(paths, width, height);
-        // document.body.innerHTML = svg;
-        // }
+        let matrix = createMatrix().translate(PAPERSIZE.cx, PAPERSIZE.cy);
+        if (PAPERSIZE.aspect > input.aspect) {
+          matrix = matrix.rotate(90); //.scale(PAPERSIZE.rMin / input.rMax);
+        } else {
+        }
+        matrix = matrix.scale(PAPERSIZE.rMin / input.rMax);
+        matrix = matrix.translate(-input.cx, -input.cy);
 
-        console.log(paths.length, paths);
+        const output = BBox();
 
-        for (const path of paths) {
-          {
-            // drawbot.currentJob?.addGcode(gcode.penUp());
-            const { x, y } = path[0];
-            drawbot.currentJob?.addGcode(gcode.move(x, y));
-            drawbot.currentJob?.addGcode(gcode.penDown());
+        for (const polyline of svg.getElementsByTagName("polyline")) {
+          for (const point of polyline.points) {
+            output.extend(point.matrixTransform(matrix));
           }
-          for (const { x, y } of path.slice(1)) {
+        }
+
+        console.log(JSON.stringify({ input, PAPERSIZE, output }, null, 2));
+
+        // drawbot.currentJob?.addGcode(gcode.penUp());
+        // drawbot.currentJob?.addGcode(gcode.move(output.xMin, output.yMin));
+        // drawbot.currentJob?.addGcode(gcode.penDown());
+        // drawbot.currentJob?.addGcode(gcode.move(output.xMax, undefined));
+        // drawbot.currentJob?.addGcode(gcode.move(undefined, output.yMax));
+        // drawbot.currentJob?.addGcode(gcode.move(output.xMin, undefined));
+        // drawbot.currentJob?.addGcode(gcode.move(undefined, output.yMin));
+        // drawbot.currentJob?.addGcode(gcode.penUp());
+
+        for (const polyline of svg.getElementsByTagName("polyline")) {
+          let index = 0;
+          for (const point of polyline.points) {
+            const { x, y } = point.matrixTransform(matrix);
+            // console.log(point.x, point.y, x, y);
             drawbot.currentJob?.addGcode(gcode.move(x, y));
+            if (index++ === 0) {
+              // first point
+              drawbot.currentJob?.addGcode(gcode.penDown());
+            }
           }
           drawbot.currentJob?.addGcode(gcode.penUp());
-
           await new Promise((r) => setTimeout(r, 1000));
         }
+
+        // // function render() {
+        // let paths = scene
+        //   .render(eye, center, up, width, height, 100, 0.1, 100, 0.01)
+        //   .map((path) => simplify(path, 0.025));
+        // // let svg = ln.toSVG(paths, width, height);
+        // // document.body.innerHTML = svg;
+        // // }
+
+        // console.log(paths.length, paths);
+
+        // for (const path of paths) {
+        //   {
+        //     // drawbot.currentJob?.addGcode(gcode.penUp());
+        //     const { x, y } = path[0];
+        //     drawbot.currentJob?.addGcode(gcode.move(x, y));
+        //     drawbot.currentJob?.addGcode(gcode.penDown());
+        //   }
+        //   for (const { x, y } of path.slice(1)) {
+        //     drawbot.currentJob?.addGcode(gcode.move(x, y));
+        //   }
+        //   drawbot.currentJob?.addGcode(gcode.penUp());
+
+        //   await new Promise((r) => setTimeout(r, 1000));
+        // }
       }}
     >
       Plaatje
